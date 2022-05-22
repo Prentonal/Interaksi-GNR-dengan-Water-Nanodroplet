@@ -1,0 +1,101 @@
+# Nanodroplet of water on the graphene nanoribbon #
+
+# ------------------------ INITIALIZATION ----------------------------
+echo			both
+units			metal
+boundary		p p p
+atom_style		full
+bond_style		harmonic
+angle_style		harmonic
+dimension		3
+
+# ----------------------- ATOM DEFINITION ----------------------------
+read_data Pos2.data
+
+# ------------------------ FORCE FIELDS ------------------------------
+pair_style		hybrid airebo 2.5 0 3 lj/cut/tip4p/long 1 2 1 1 0.1250 9 8
+pair_coeff * * lj/cut/tip4p/long 0.0 0.0
+pair_coeff 1 2 lj/cut/tip4p/long 0.0 0.0
+pair_coeff 2 2 lj/cut/tip4p/long 0.0 0.0
+pair_coeff 2 3 lj/cut/tip4p/long 0.0032399 3.19
+pair_coeff 1 1 lj/cut/tip4p/long 0.16275 3.16435 # O-O (water TIP4P/2005)
+pair_coeff 1 3 lj/cut/tip4p/long 0.0032399 3.19 # O-C (amber)
+pair_coeff * * airebo CH.airebo C H NULL
+kspace_style	pppm/tip4p 1.0e-4
+
+bond_coeff 1 600.0  0.9572 # TIP4P/epsilon
+bond_coeff 2 610.0 1.42 # GROMOS53A6
+
+angle_coeff 1 75.0 104.52 # TIP4P/epsilon
+angle_coeff  2 90.0 120.0 # GROMOS53A6
+
+# Grouping #
+group g_C type 3
+group g_O type 1
+group g_H type 2
+group g_W union g_O g_H
+
+compute 3 all pe/atom
+compute 4 all stress/atom NULL virial
+
+fix npt all npt temp 300 300 .5 x 0.0 0.0 .5 y 0.0 0.0 .5
+fix bp all balance 250 1 shift z 10 1
+
+thermo_style custom step temp ke pe press vol
+timestep 0.00001
+run 500
+
+#group g_fix region r_fix
+variable frc equal 2e-4 # force to be applied to the water molecule
+variable ymn equal ylo+20
+variable ymx equal yhi-20
+variable xmn equal xlo+20
+variable xmx equal xhi-20
+region middle block ${xmn} ${xmx} ${ymn} ${ymx} -5 5 units box
+group middle region middle
+unfix npt
+
+newton on
+
+change_box all boundary p p p
+
+reset_timestep 0
+velocity middle set NULL NULL -20.0 sum no units box
+velocity g_O set 0.0 0.0 -20.0 sum yes units box
+velocity g_H set 0.0 0.0 -20.0 sum yes units box
+#fix	eva g_W evaporate 10000 1 middle 38277 molecule yes
+fix grav g_W gravity 5.0 vector 0 0 -20
+fix kick g_W addforce ${frc} 0.0 0.0
+timestep 0.00001
+
+fix fxlan g_W langevin 300.0 300.0 100.0 48279
+fix 1 all nve
+fix 3 all temp/rescale 1 300.0 300.0 0.0 1.0
+
+fix 		mysf1 g_C setforce 0.0 NULL 0.0
+velocity	g_C set NULL NULL 0
+
+compute myack all ackland/atom
+compute myke all ke/atom
+compute mype all pe/atom
+compute Ek_Graphene g_C reduce sum c_myke
+compute Ek_Water g_W reduce sum c_myke
+compute Ep_Graphene g_C reduce sum c_mype
+compute Ep_Water g_W reduce sum c_mype
+
+compute gofr all rdf 1000  1 1  2 2  1 2  # O-O, H-H, O-H
+compute gfr all rdf 1000  1 3  3 3  2 3  # O-C, C-C, O-C
+fix rdf all ave/time 100 10 1000 c_gofr[*] file spce-rdfgo.dat mode vector
+fix rdf all ave/time 100 10 1000 c_gfr[*] file spce-rdfg.dat mode vector
+
+dump mydump1 all atom 100 dump.Graphene300.dump
+dump mydump2 all cfg 5000 dump_*.cfg mass type xs ys zs id c_mype
+dump_modify mydump2 element O H C
+
+thermo 1000
+thermo_style custom step atoms temp pe c_Ep_Graphene c_Ep_Water ke c_Ek_Graphene c_Ek_Water etotal evdwl ecoul epair enthalpy vol density press
+thermo_modify lost ignore flush yes
+run 	250000
+
+print "Selesai"
+# End #
